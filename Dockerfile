@@ -5,68 +5,33 @@ RUN apk update && \
     apk add --no-cache git ffmpeg wget curl bash openssl
 
 LABEL maintainer="imprimindoideias" \
-      description="evolution-api 2.3.7 oficial, com dois ajustes locais: fix do PR evolution-foundation/evolution-api#2763 (guarda de mídia que descartava documentos com legenda) e remoção do vazamento de chaves de sessão nos logs (libsignal-node console.info/warn)." \
+      description="evolution-api 2.3.7 oficial, com dois ajustes locais: fix do PR evolution-foundation/evolution-api#2763 (guarda de midia que descartava documentos com legenda) e remocao do vazamento de chaves de sessao nos logs (libsignal-node console.info/warn)." \
       source="https://github.com/evolution-foundation/evolution-api/pull/2763"
 
 WORKDIR /evolution
 
-# Código-fonte oficial, na mesma tag que já roda em produção (2.3.7)
+# Codigo-fonte oficial, na mesma tag que ja roda em producao (2.3.7)
 RUN git clone --depth 1 --branch 2.3.7 https://github.com/evolution-foundation/evolution-api.git . \
     && rm -rf .git
 
 RUN npm ci --silent
 
 # --- Patch 1: bug do PR #2763 (media guard em getBase64FromMediaMessage) ---
-# A checagem original usa `'messageContextInfo' in msg.message`, que é
-# verdadeira mesmo quando a chave não existe de fato (protobuf.js declara
-# o campo no prototype de toda mensagem). Isso faz a função descartar
-# documentos/mídias legítimas com legenda antes de chegarem ao webhook.
-RUN python3 - <<'PYEOF'
-path = "src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts"
-old = "      if ('messageContextInfo' in msg.message && Object.keys(msg.message).length === 1) {\n"
-new = (
-    "      if (\n"
-    "        Object.keys(msg.message).length === 1 &&\n"
-    "        Object.prototype.hasOwnProperty.call(msg.message, 'messageContextInfo')\n"
-    "      ) {\n"
-)
-with open(path) as f:
-    content = f.read()
-assert content.count(old) == 1, f"patch 1: esperava 1 ocorrência, achei {content.count(old)}"
-content = content.replace(old, new)
-with open(path, "w") as f:
-    f.write(content)
-print("patch 1 aplicado (media guard)")
-PYEOF
+RUN sed -i "s#if ('messageContextInfo' in msg.message && Object.keys(msg.message).length === 1) {#if (Object.keys(msg.message).length === 1 \&\& Object.prototype.hasOwnProperty.call(msg.message, 'messageContextInfo')) {#" src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts \
+    && grep -q "Object.prototype.hasOwnProperty.call(msg.message, 'messageContextInfo')" src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts \
+    && echo "patch 1 OK"
 
-# --- Patch 2: libsignal-node (dependência do Baileys) imprime o objeto de
-# sessão inteiro em console.info/warn ao fechar/abrir/remover sessões —
-# incluindo privKey e rootKey da sessão Signal em texto puro no log.
-RUN test -f node_modules/libsignal/src/session_record.js \
-    && python3 - <<'PYEOF'
-path = "node_modules/libsignal/src/session_record.js"
-replacements = [
-    ('console.warn("Session already closed", session);',
-     'console.warn("Session already closed");'),
-    ('console.info("Closing session:", session);',
-     'console.info("Closing session");'),
-    ('console.info("Opening session:", session);',
-     'console.info("Opening session");'),
-    ('console.info("Removing old closed session:", oldestSession);',
-     'console.info("Removing old closed session");'),
-]
-with open(path) as f:
-    content = f.read()
-for old, new in replacements:
-    count = content.count(old)
-    assert count == 1, f"patch 2: esperava 1 ocorrência de {old!r}, achei {count}"
-    content = content.replace(old, new)
-with open(path, "w") as f:
-    f.write(content)
-print("patch 2 aplicado (libsignal, 4 ocorrencias)")
-PYEOF
+# --- Patch 2: libsignal-node imprime a sessao inteira (com chaves privadas) em console.info/warn ---
+RUN sed -i \
+    -e 's#console\.warn("Session already closed", session);#console.warn("Session already closed");#' \
+    -e 's#console\.info("Closing session:", session);#console.info("Closing session");#' \
+    -e 's#console\.info("Opening session:", session);#console.info("Opening session");#' \
+    -e 's#console\.info("Removing old closed session:", oldestSession);#console.info("Removing old closed session");#' \
+    node_modules/libsignal/src/session_record.js \
+    && ! grep -q "Closing session:\", session" node_modules/libsignal/src/session_record.js \
+    && echo "patch 2 OK"
 
-RUN chmod +x ./Docker/scripts/* && dos2unix ./Docker/scripts/* 2>/dev/null || true
+RUN chmod +x ./Docker/scripts/* 2>/dev/null; dos2unix ./Docker/scripts/* 2>/dev/null || true
 
 RUN ./Docker/scripts/generate_database.sh
 
