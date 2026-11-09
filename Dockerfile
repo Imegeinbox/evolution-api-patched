@@ -13,7 +13,7 @@ WORKDIR /evolution
 # Codigo-fonte oficial, na mesma tag que ja roda em producao (2.3.7)
 RUN git clone --depth 1 --branch 2.3.7 https://github.com/evolution-foundation/evolution-api.git . \
     && rm -rf .git
-
+RUN cp .env.example .env
 RUN npm ci --silent
 
 # --- Patch 1: bug do PR #2763 (media guard em getBase64FromMediaMessage) ---
