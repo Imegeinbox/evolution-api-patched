@@ -34,7 +34,12 @@ RUN sed -i \
 RUN chmod +x ./Docker/scripts/* 2>/dev/null; dos2unix ./Docker/scripts/* 2>/dev/null || true
 
 RUN ./Docker/scripts/generate_database.sh
-
+# --- Patch 3: Baileys nunca confirma (ack) a stanza <status> que o WhatsApp manda desde set/2026 -> servidor derruba a conexao ~20-50min depois e segura mensagens novas ate reconectar (evolution-foundation/evolution-api#2778, upstream Baileys#2858) ---
+COPY patches/status-ack.sed /tmp/status-ack.sed
+RUN sed -i -f /tmp/status-ack.sed node_modules/baileys/lib/Socket/messages-recv.js \
+    && grep -q "handleStatus" node_modules/baileys/lib/Socket/messages-recv.js \
+    && grep -q "CB:status" node_modules/baileys/lib/Socket/messages-recv.js \
+    && echo "patch 3 OK"
 RUN npm run build
 
 FROM node:24-alpine AS final
